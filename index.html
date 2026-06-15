@@ -30,6 +30,9 @@
   .colorbar{display:flex; align-items:center; gap:7px; padding:0 0 12px; flex-wrap:wrap;}
   .colorbar .lbl{font-size:12px; color:var(--muted); margin-right:2px;}
   .colorbar .sw{width:28px; height:28px; border-radius:50%; border:2px solid var(--line); padding:0;}
+  .colorbar .cpick{width:36px; height:30px; padding:0; border:1px solid var(--line); border-radius:8px; background:var(--card2); -webkit-appearance:none; appearance:none;}
+  .colorbar .cpick::-webkit-color-swatch-wrapper{padding:3px;}
+  .colorbar .cpick::-webkit-color-swatch{border:none; border-radius:5px;}
   .colorbar .delplan{margin-left:auto; height:30px; padding:0 12px; border-radius:8px; border:1px solid rgba(255,92,108,.4); background:transparent; color:var(--danger); font-size:12px; font-weight:700;}
   .colorbar .sw.active{border-color:#fff; transform:scale(1.08);}
   .daynav{display:flex; align-items:center; gap:8px;}
@@ -221,25 +224,24 @@ function renderColorBar(){
   if(!curPlan){ bar.style.display='none'; return; }
   bar.style.display='flex';
   const lbl=document.createElement('span'); lbl.className='lbl'; lbl.textContent=curPlan+' colour:'; bar.appendChild(lbl);
-  PALETTE.forEach(col=>{
-    const b=document.createElement('button'); b.className='sw'+(colorOf(curPlan)===col?' active':'');
-    b.style.background=col; b.onclick=()=>{ db.colors[curPlan]=col; save(); render(); };
-    bar.appendChild(b);
-  });
-  const del=document.createElement('button'); del.className='delplan'; del.textContent='🗑 Delete plan';
+  const pick=document.createElement('input'); pick.type='color'; pick.className='cpick'; pick.value=colorOf(curPlan);
+  pick.oninput=()=>{ db.colors[curPlan]=pick.value; save(); renderTabs(); renderDate(); };
+  pick.onchange=()=>{ db.colors[curPlan]=pick.value; save(); render(); };
+  bar.appendChild(pick);
+  const del=document.createElement('button'); del.className='delplan'; del.textContent='🗑 Delete Section';
   del.onclick=deletePlan; bar.appendChild(del);
 }
 function deletePlan(){
   if(!curPlan) return;
   const keys=Object.keys(db.plans);
-  if(keys.length<=1){ toast('Keep at least one plan'); return; }
-  if(!confirm('Delete the "'+curPlan+'" plan?\n\nThis removes its exercises and all logged history for this plan. This cannot be undone.')) return;
+  if(keys.length<=1){ toast('Keep at least one section'); return; }
+  if(!confirm('Delete the "'+curPlan+'" section?\n\nThis removes its exercises and all logged history. This cannot be undone.')) return;
   // remove plan, its colour, and its entries from every logged day
   delete db.plans[curPlan];
   delete db.colors[curPlan];
   Object.keys(db.log).forEach(d=>{ if(db.log[d][curPlan]) delete db.log[d][curPlan]; if(!Object.keys(db.log[d]).length) delete db.log[d]; });
   curPlan=Object.keys(db.plans)[0];
-  save(); render(); toast('Plan deleted');
+  save(); render(); toast('Section deleted');
 }
 
 /* ---------- LOG ---------- */
