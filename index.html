@@ -30,6 +30,7 @@
   .colorbar{display:flex; align-items:center; gap:7px; padding:0 0 12px; flex-wrap:wrap;}
   .colorbar .lbl{font-size:12px; color:var(--muted); margin-right:2px;}
   .colorbar .sw{width:28px; height:28px; border-radius:50%; border:2px solid var(--line); padding:0;}
+  .colorbar .delplan{margin-left:auto; height:30px; padding:0 12px; border-radius:8px; border:1px solid rgba(255,92,108,.4); background:transparent; color:var(--danger); font-size:12px; font-weight:700;}
   .colorbar .sw.active{border-color:#fff; transform:scale(1.08);}
   .daynav{display:flex; align-items:center; gap:8px;}
   .daynav button.arrow{background:var(--card2); color:var(--txt); border:1px solid var(--line); border-radius:12px; width:44px; height:48px; font-size:22px; flex:0 0 auto;}
@@ -225,6 +226,20 @@ function renderColorBar(){
     b.style.background=col; b.onclick=()=>{ db.colors[curPlan]=col; save(); render(); };
     bar.appendChild(b);
   });
+  const del=document.createElement('button'); del.className='delplan'; del.textContent='🗑 Delete plan';
+  del.onclick=deletePlan; bar.appendChild(del);
+}
+function deletePlan(){
+  if(!curPlan) return;
+  const keys=Object.keys(db.plans);
+  if(keys.length<=1){ toast('Keep at least one plan'); return; }
+  if(!confirm('Delete the "'+curPlan+'" plan?\n\nThis removes its exercises and all logged history for this plan. This cannot be undone.')) return;
+  // remove plan, its colour, and its entries from every logged day
+  delete db.plans[curPlan];
+  delete db.colors[curPlan];
+  Object.keys(db.log).forEach(d=>{ if(db.log[d][curPlan]) delete db.log[d][curPlan]; if(!Object.keys(db.log[d]).length) delete db.log[d]; });
+  curPlan=Object.keys(db.plans)[0];
+  save(); render(); toast('Plan deleted');
 }
 
 /* ---------- LOG ---------- */
