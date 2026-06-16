@@ -42,13 +42,17 @@
   .daynav .date .dot{width:8px; height:8px; border-radius:50%; display:inline-block;}
   .wrap{padding:14px 16px;}
   .ex-card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); margin-bottom:14px; overflow:hidden;}
-  .ex-head{display:flex; align-items:flex-start; gap:10px; padding:13px 14px; background:var(--card2);}
+  .ex-head{display:flex; align-items:center; gap:10px; padding:11px 12px 11px 14px; background:var(--card2);}
   .ex-head .meta{flex:1; min-width:0;}
   .ex-head .name{font-size:16px; font-weight:700;}
   .ex-head .desc{font-size:12px; color:var(--muted); margin-top:3px; line-height:1.4; white-space:pre-wrap;}
   .ex-head .last{font-size:11px; color:var(--muted); margin-top:4px;}
-  .ex-head .btns{display:flex; flex-direction:column; gap:6px;}
-  .ex-head .btns button{background:none; border:none; font-size:16px; color:var(--muted); padding:2px;}
+  .ex-head .name .rename{font-size:13px; opacity:.55; margin-left:4px;}
+  .ex-head .movebtns{display:flex; flex-direction:row; gap:4px;}
+  .ex-head .movebtns .mv{font-size:12px; line-height:1; width:32px; height:32px; padding:0; background:var(--bg); border:1px solid var(--line); border-radius:8px; color:var(--txt);}
+  .ex-head .movebtns .mv:disabled{opacity:.25;}
+  .ex-head .btns{display:flex; flex-direction:row; align-items:center; gap:6px; flex:0 0 auto;}
+  .ex-head .btns>button{width:32px; height:32px; padding:0; font-size:15px; color:var(--muted); background:var(--bg); border:1px solid var(--line); border-radius:8px;}
   .sets{padding:6px 10px 10px;}
   .set-row{display:grid; grid-template-columns:34px 1fr 1fr 40px; gap:8px; align-items:center; margin-top:8px;}
   .set-row .idx{text-align:center; font-size:13px; font-weight:700; color:var(--muted); background:var(--bg); border-radius:10px; height:46px; line-height:46px;}
@@ -154,7 +158,7 @@
 /* ---------- storage ---------- */
 const DB_KEY='gymtracker_v1';
 const PALETTE=['#4f8cff','#2bd47a','#ff5c6c','#ffb84f','#b07cff','#4fd6e0','#ff7cc4','#9ad44f'];
-const DEFAULTS={ plans:{ Push:[], Pull:[], Legs:[], Upper:[], Lower:[] }, colors:{}, log:{} };
+const DEFAULTS={ plans:{ Push:[], Pull:[], Legs:[], Upper:[], Lower:[] }, colors:{}, order:{}, log:{} };
 let db = load();
 let curPlan = Object.keys(db.plans)[0] || null;
 let curDate = todayStr();
@@ -169,6 +173,7 @@ function load(){
     if(!d.colors[p]) d.colors[p]=PALETTE[i%PALETTE.length];
   });
   d.log=d.log||{};
+  d.order=d.order||{};
   return d;
 }
 function save(){ localStorage.setItem(DB_KEY, JSON.stringify(db)); }
@@ -239,6 +244,7 @@ function deletePlan(){
   // remove plan, its colour, and its entries from every logged day
   delete db.plans[curPlan];
   delete db.colors[curPlan];
+  delete db.order[curPlan];
   Object.keys(db.log).forEach(d=>{ if(db.log[d][curPlan]) delete db.log[d][curPlan]; if(!Object.keys(db.log[d]).length) delete db.log[d]; });
   curPlan=Object.keys(db.plans)[0];
   save(); render(); toast('Section deleted');
@@ -247,41 +253,107 @@ function deletePlan(){
 /* ---------- LOG ---------- */
 function renderLog(){
   const c=document.getElementById('content'); c.innerHTML='';
-  if(!curPlan){ c.innerHTML='<div class="empty">Tap “+ Plan” to create your first workout.</div>'; return; }
-  const exercises=db.plans[curPlan]||[];
-  if(!exercises.length){ c.innerHTML='<div class="empty">No exercises in <b>'+escapeHtml(curPlan)+'</b> yet.<br>Tap “Add exercise” below to start.</div>'; }
-  exercises.forEach((exObj,exi)=>{
+  if(!curPlan){ c.innerHTML='<div class="empty">Tap \u201c+ Plan\u201d to create your first workout.</div>'; return; }
+  const dayList=dayOrder(curPlan,curDate);   // exObj refs in THIS day's order
+  if(!dayList.length){ c.innerHTML='<div class="empty">No exercises in <b>'+escapeHtml(curPlan)+'</b> yet.<br>Tap \u201cAdd exercise\u201d below to start.</div>'; }
+  const isTemplateDay = (curDate===firstDataDate(curPlan)) || (firstDataDate(curPlan)===null);
+  dayList.forEach((exObj,exi)=>{
     const ex=exObj.name;
     const sets=getSets(curPlan,ex); if(!sets.length){ sets.push({w:'',r:''}); }
     const card=document.createElement('div'); card.className='ex-card';
     const last=lastLogged(curPlan,ex);
-    const lastTxt=last? 'Last '+ddmm(last.date)+': '+last.sets.filter(s=>s.w||s.r).map(s=>(s.w||'?')+'×'+(s.r||'?')).join('  ') : '';
+    const lastTxt=last? 'Last '+ddmm(last.date)+': '+last.sets.filter(s=>s.w||s.r).map(s=>(s.w||'?')+'\u00d7'+(s.r||'?')).join('  ') : '';
     const descHtml = exObj.desc? '<div class="desc">'+escapeHtml(exObj.desc)+'</div>' : '';
-    card.innerHTML='<div class="ex-head"><div class="meta"><div class="name">'+escapeHtml(ex)+'</div>'+descHtml+
+    const upDis = exi===0?' disabled':''; const downDis = exi===dayList.length-1?' disabled':'';
+    card.innerHTML='<div class="ex-head"><div class="meta"><div class="name">'+escapeHtml(ex)+' <span class="rename" title="Rename">\u270f\ufe0f</span></div>'+descHtml+
       (lastTxt?'<div class="last">'+lastTxt+'</div>':'')+'</div>'+
-      '<div class="btns"><button class="edit" title="Description">✎</button><button class="del" title="Delete">🗑</button></div></div>'+
+      '<div class="btns"><div class="movebtns"><button class="mv up" title="Move up"'+upDis+'>\u25b2</button><button class="mv down" title="Move down"'+downDis+'>\u25bc</button></div>'+
+      '<button class="edit" title="Description">\u270e</button><button class="del" title="Delete">\ud83d\uddd1</button></div></div>'+
       '<div class="sets"><div class="set-row head"><span>Set</span><span>Weight (kg)</span><span>Reps</span><span></span></div></div>';
     const setsBox=card.querySelector('.sets');
     sets.forEach((s,si)=>{
       const row=document.createElement('div'); row.className='set-row';
       row.innerHTML='<div class="idx">'+(si+1)+'</div>'+
-        '<input type="number" inputmode="decimal" placeholder="–" value="'+(s.w||'')+'" data-f="w">'+
-        '<input type="number" inputmode="numeric" placeholder="–" value="'+(s.r||'')+'" data-f="r">'+
-        '<button class="rm">✕</button>';
+        '<input type="number" inputmode="decimal" placeholder="\u2013" value="'+(s.w||'')+'" data-f="w">'+
+        '<input type="number" inputmode="numeric" placeholder="\u2013" value="'+(s.r||'')+'" data-f="r">'+
+        '<button class="rm">\u2715</button>';
       row.querySelectorAll('input').forEach(inp=>inp.addEventListener('input',()=>{ sets[si][inp.dataset.f]=inp.value; setSets(curPlan,ex,sets); renderDate(); }));
       row.querySelector('.rm').onclick=()=>{ sets.splice(si,1); if(!sets.length) sets.push({w:'',r:''}); setSets(curPlan,ex,sets); render(); };
       setsBox.appendChild(row);
     });
     const addSet=document.createElement('button'); addSet.className='addset'; addSet.textContent='+ Add set';
-    addSet.onclick=()=>{ const w=sets.length?sets[sets.length-1].w:''; sets.push({w:w,r:''}); setSets(curPlan,ex,sets); render(); toast('Set added'); };
+    addSet.onclick=()=>{ const prev=sets.length?parseFloat(sets[sets.length-1].w):NaN; const w=isNaN(prev)?'':String(Math.round(prev*0.8)); sets.push({w:w,r:''}); setSets(curPlan,ex,sets); render(); toast(isNaN(prev)?'Set added':'Set added \u00b7 '+w+'kg (80%)'); };
     setsBox.appendChild(addSet);
     card.querySelector('.edit').onclick=()=>askDesc(exObj.desc,txt=>{ exObj.desc=txt; save(); render(); });
-    card.querySelector('.del').onclick=()=>{ if(confirm('Remove "'+ex+'" from '+curPlan+'?')){ db.plans[curPlan].splice(exi,1); save(); render(); } };
+    card.querySelector('.rename').onclick=()=>renameExercise(ex);
+    card.querySelector('.mv.up').onclick=()=>moveExercise(exi,-1);
+    card.querySelector('.mv.down').onclick=()=>moveExercise(exi,1);
+    card.querySelector('.del').onclick=()=>{ if(confirm('Remove "'+ex+'" from the '+curPlan+' section (all dates)?')){ deleteExercise(ex); } };
     c.appendChild(card);
   });
+  // order hint
+  const hint=document.createElement('div'); hint.style.cssText='font-size:11px;color:var(--muted);text-align:center;margin:2px 0 12px;';
+  hint.textContent = isTemplateDay ? 'This is the first session \u2014 its order is the template new dates copy.' : 'Reordering here changes only this date.';
+  if(dayList.length>1) c.appendChild(hint);
   const addEx=document.createElement('button'); addEx.className='addex'; addEx.textContent='+ Add exercise';
   addEx.onclick=()=>askDialog('Exercise name','Add exercise',n=>{ db.plans[curPlan].push({name:n,desc:''}); save(); render(); });
   c.appendChild(addEx);
+}
+
+/* ---------- per-day exercise ordering ---------- */
+function masterMap(plan){ const m={}; (db.plans[plan]||[]).forEach(e=>m[e.name]=e); return m; }
+function firstDataDate(plan){
+  const master=(db.plans[plan]||[]).map(e=>e.name);
+  const ds=Object.keys(db.log).filter(d=>{ const day=db.log[d][plan]; if(!day) return false; return master.some(n=>(day[n]||[]).some(s=>s.w&&s.r)); }).sort();
+  return ds.length?ds[0]:null;
+}
+function templateOrderNames(plan){
+  const fdd=firstDataDate(plan);
+  if(fdd && db.order[plan] && db.order[plan][fdd]) return db.order[plan][fdd].slice();
+  return (db.plans[plan]||[]).map(e=>e.name);
+}
+function dayOrderNames(plan,date){
+  let names;
+  if(db.order[plan] && db.order[plan][date]) names=db.order[plan][date].slice();
+  else names=templateOrderNames(plan);
+  const master=(db.plans[plan]||[]).map(e=>e.name);
+  names=names.filter(n=>master.includes(n));
+  master.forEach(n=>{ if(!names.includes(n)) names.push(n); });
+  return names;
+}
+function dayOrder(plan,date){ const m=masterMap(plan); return dayOrderNames(plan,date).map(n=>m[n]).filter(Boolean); }
+
+function moveExercise(exi,dir){
+  const names=dayOrderNames(curPlan,curDate); const j=exi+dir;
+  if(j<0||j>=names.length) return;
+  const t=names[exi]; names[exi]=names[j]; names[j]=t;
+  db.order[curPlan]=db.order[curPlan]||{};
+  db.order[curPlan][curDate]=names;            // persists for THIS date only
+  save(); render();
+}
+
+function renameExercise(oldName){
+  const exObj=(db.plans[curPlan]||[]).find(e=>e.name===oldName); if(!exObj) return;
+  askDialog('Exercise name','Rename exercise',newName=>{
+    newName=newName.trim(); if(!newName||newName===oldName) return;
+    if((db.plans[curPlan]||[]).some(e=>e.name===newName)){ toast('Name already used'); return; }
+    exObj.name=newName;
+    // migrate logged history
+    Object.keys(db.log).forEach(d=>{ const pl=db.log[d][curPlan]; if(pl && pl[oldName]!==undefined){ pl[newName]=pl[oldName]; delete pl[oldName]; } });
+    // migrate per-day order arrays
+    Object.keys(db.order[curPlan]||{}).forEach(d=>{ db.order[curPlan][d]=db.order[curPlan][d].map(n=>n===oldName?newName:n); });
+    save(); render(); toast('Renamed');
+  });
+  const inp=document.getElementById('dlgInput'); inp.value=oldName; setTimeout(()=>{inp.focus(); inp.select();},60);
+}
+
+function deleteExercise(name){
+  const idx=(db.plans[curPlan]||[]).findIndex(e=>e.name===name); if(idx<0) return;
+  db.plans[curPlan].splice(idx,1);
+  // clean from per-day orders + logged sets
+  Object.keys(db.order[curPlan]||{}).forEach(d=>{ db.order[curPlan][d]=db.order[curPlan][d].filter(n=>n!==name); });
+  Object.keys(db.log).forEach(d=>{ const pl=db.log[d][curPlan]; if(pl && pl[name]!==undefined) delete pl[name]; });
+  save(); render();
 }
 
 /* ---------- PROGRESS ---------- */
