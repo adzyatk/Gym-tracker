@@ -345,7 +345,7 @@
 /* ---------- constants ---------- */
 const STORE='gymtracker_v2', OLD_STORE='gymtracker_v1', PREV_STORE='gymtracker_v2_prev', BAD_STORE='gymtracker_v2_unreadable';
 const SCHEMA=2;
-const APP_VERSION='2.3.0';   // keep in step with VERSION in sw.js
+const APP_VERSION='2.4.0';   // keep in step with VERSION in sw.js
 const PALETTE=['#4f8cff','#2bd47a','#ff5c6c','#ffb84f','#b07cff','#4fd6e0','#ff7cc4','#9ad44f'];
 const KG_PER_LB=0.45359237;
 const KINDS={ weight:{label:'Weighted',w:'Weight',r:'Reps'}, body:{label:'Bodyweight',w:'Added',r:'Reps'}, time:{label:'Timed',w:'Added',r:'Seconds'} };
@@ -393,7 +393,72 @@ const fmtW=kg=>fmtNum(toDisp(kg));
    log:   { 'YYYY-MM-DD': { planId: { ex:{ exId:[{w(kg)|null, r|null, warm, done}] }, order?:[exId], note? } } }
    Weights are always stored in kg; lb is a display setting. */
 function defaultSettings(){ return {unit:'kg', backoff:true, backoffPct:80, roundKg:2.5, roundLb:5, restSec:120, restAuto:true, upNext:true, theme:'system', backupAt:null, backupCount:0}; }
-function defaultDb(){ return {version:SCHEMA, settings:defaultSettings(), plans:['Push','Pull','Legs','Upper','Lower'].map((n,i)=>({id:uid(),name:n,color:PALETTE[i],archived:false,exercises:[]})), log:{}}; }
+/* Default program: a machine-focused Push / Pull / Legs / Upper / Lower split (rest days Thu and Sun).
+   Each entry is [name, kind, rest in seconds, target]; the target shows under the exercise name.
+   "Top set + back-offs" lines up with Add Set, which suggests back-offs at the Settings percentage. */
+const TOP=(n,top,back)=>'Top set + '+n+' back-off'+(n>1?'s':'')+' · '+top+', back-off'+(n>1?'s':'')+' '+back;
+const DEFAULT_PROGRAM=[
+  ['Push',[
+    ['Smith Machine Incline Press','weight',180,TOP(2,'6–8','8–12')],
+    ['Pin-Loaded Flat Chest Press','weight',150,TOP(1,'8–10','10–12')],
+    ['Plate-Loaded Shoulder Press','weight',150,TOP(1,'6–10','10–12')],
+    ['Single-Arm Pec Fly','weight',90,'2 sets · 12–15'],
+    ['Cuffed Cable Lateral Raise','weight',60,'3 sets · 12–20'],
+    ['JM Press (Smith)','weight',120,'2 sets · 8–12'],
+    ['Single-Arm Cuffed Pushdown','weight',60,'2 sets · 12–15']]],
+  ['Pull',[
+    ['Plate-Loaded Iso-Lateral Front Lat Pulldown','weight',150,TOP(2,'6–10','10–12')],
+    ['Single-Arm Lat Row','weight',120,'2 sets · 8–12'],
+    ['Wide Grip Row','weight',120,'2 sets · 8–12 · elbows out, upper back'],
+    ['Plate-Loaded Lat Pullover','weight',90,'2 sets · 10–15'],
+    ['Rear Delt Fly','weight',60,'3 sets · 12–20'],
+    ['Shrugs','weight',90,'2 sets · 10–15'],
+    ['Single-Arm Preacher Curl','weight',90,'3 sets · 8–12'],
+    ['Cuffed Forearm Curl','weight',60,'2 sets · 12–20 · optional']]],
+  ['Legs',[
+    ['Squat Press','weight',180,TOP(2,'6–10','10–12')],
+    ['Leg Extensions','weight',90,'3 sets · 10–15'],
+    ['Seated Hamstring Curl','weight',90,'3 sets · 8–12'],
+    ['Hyperextensions','body',90,'2 sets · 10–15 · hold a plate once bodyweight gets easy'],
+    ['Adductors','weight',60,'2 sets · 10–15'],
+    ['Calf Raise','weight',90,'3 sets · 8–12 · pause in the stretch'],
+    ['Ab Crunch Machine','weight',60,'2 sets · 10–15']]],
+  ['Upper',[
+    ['Machine Lat Pulldown','weight',150,TOP(1,'6–10','10–12')],
+    ['Flat Chest Press','weight',150,TOP(1,'6–10','10–12')],
+    ['Iso-Lateral Row','weight',120,'2 sets · 8–12 · chest-supported'],
+    ['Incline Chest Press','weight',120,'2 sets · 8–12'],
+    ['Lateral Raise Machine','weight',60,'3 sets · 12–20'],
+    ['Overhead Triceps Extension','weight',90,'2 sets · 10–15'],
+    ['Machine Biceps Curl','weight',90,'2 sets · 10–15 · or cable curl']]],
+  ['Lower',[
+    ['Hack Squat','weight',180,TOP(2,'6–10','10–12')],
+    ['SLDL (Smith)','weight',150,TOP(1,'8–10','10–12')],
+    ['Seated Hamstring Curl','weight',90,'3 sets · 8–12'],
+    ['Leg Extensions','weight',90,'2 sets · 12–15'],
+    ['Adductors','weight',60,'2 sets · 10–15'],
+    ['Abductors','weight',60,'2 sets · 12–20'],
+    ['Calf Raise','weight',90,'3 sets · 10–15 · pause in the stretch'],
+    ['Cable Crunch','weight',60,'2 sets · 10–15']]]];
+const defaultExercises=name=>{ const t=DEFAULT_PROGRAM.find(([n])=>n.toLowerCase()===String(name).toLowerCase()); return t? t[1].map(([n,kind,rest,desc])=>({id:uid(), name:n, desc, kind, rest, archived:false})) : null; };
+function defaultDb(){ return {version:SCHEMA, settings:defaultSettings(), plans:DEFAULT_PROGRAM.map(([n],i)=>({id:uid(),name:n,color:PALETTE[i],archived:false,exercises:defaultExercises(n)})), log:{}}; }
+/* Adds the default program to existing data: same-named plans get any missing exercises appended (yours are left as they are), missing plans are created. */
+function addDefaultProgram(only){
+  let addedEx=0, addedPlans=0;
+  DEFAULT_PROGRAM.forEach(([name],i)=>{
+    if(only&&only!==name) return;
+    let p=db.plans.find(q=>q.name.toLowerCase()===name.toLowerCase());
+    if(!p){ p={id:uid(), name, color:PALETTE[(db.plans.length+i)%PALETTE.length], archived:false, exercises:[]}; db.plans.push(p); addedPlans++; }
+    p.archived=false;
+    defaultExercises(name).forEach(ex=>{
+      const have=p.exercises.find(x=>x.name.toLowerCase()===ex.name.toLowerCase());
+      if(!have){ p.exercises.push(ex); addedEx++; } else if(have.archived){ have.archived=false; addedEx++; }
+    });
+    p.exercises=p.exercises.filter(x=>!x.archived).concat(p.exercises.filter(x=>x.archived));
+  });
+  commit();
+  return {addedEx, addedPlans};
+}
 const blankSet=()=>({w:null,r:null,warm:false,done:false});
 const cleanSet=s=>{ s=s||{}; return {w:num(s.w), r:num(s.r), warm:!!s.warm, done:!!s.done}; };
 const isBlank=s=>s.w==null&&s.r==null;
@@ -1275,7 +1340,12 @@ function renderPlans(){
   const act=plan.exercises.filter(x=>!x.archived), gone=plan.exercises.filter(x=>x.archived);
   c.insertAdjacentHTML('beforeend','<div class="group-h" style="padding-top:6px">'+esc(plan.name)+' · '+act.length+' exercise'+(act.length===1? '' : 's')+'</div>');
   const g=document.createElement('div'); g.className='group list';
-  if(!act.length) g.innerHTML='<div class="row"><span class="lbl muted" style="padding:10px 8px">No exercises yet. Add them below.</span></div>';
+  if(!act.length){
+    g.innerHTML='<div class="row"><span class="lbl muted" style="padding:10px 8px">No exercises yet. Add them below.</span></div>';
+    if(defaultExercises(plan.name)) g.appendChild(btn('row btn tint',I('plus','sm')+'<span class="lbl">Use the Default '+esc(plan.name)+' Exercises</span>',()=>{
+      haptic(); undoable('Default '+plan.name+' exercises added',()=>{ addDefaultProgram(plan.name); renderPlans(); });
+    }));
+  }
   act.forEach(ex=>{
     const wrap=document.createElement('div'); wrap.className='swipe';
     wrap.innerHTML='<button class="swipe-del" tabindex="-1">Remove</button><div class="row slide"><span class="grip" role="button" aria-label="Drag to reorder '+esc(ex.name)+'">'+I('grip')+'</span>'+
@@ -1412,6 +1482,12 @@ function renderSettings(){
   c.insertAdjacentHTML('beforeend','<div class="group-f">This is the default. Give an exercise its own rest time by editing it in Plans.</div>');
   const wo=sec('Workout','Learns your rotation from the last 8 weeks, e.g. Push → Pull → Legs, and opens today on the plan that comes next.');
   switchRow(wo,'Open on the Plan That’s Up Next',st.upNext,v=>{ st.upNext=v; });
+  const pg=sec('Program','Fills Push, Pull, Legs, Upper and Lower with the default machine-based program, with targets and rest times. Exercises you already have, and all your history, are left as they are.');
+  pg.appendChild(btn('row btn tint',I('plans','sm')+'<span class="lbl">Add Default Program</span>',()=>{
+    haptic();
+    let r; undoable('Default program added',()=>{ r=addDefaultProgram(); renderSettings(); });
+    if(r&&!r.addedEx&&!r.addedPlans){ hideSnack(); toast('You already have every default exercise'); }
+  }));
   const store=persistState==='yes'? ' The browser has agreed not to clear it automatically.' : persistState==='no'? ' The browser may clear it if the phone runs low on space.' : '';
   const bk=sec('Backup','Your log is stored only in this browser on this phone. Last backup: <b>'+(st.backupAt? esc(fullDate(st.backupAt)) : 'never')+'</b>.'+store);
   bk.appendChild(btn('row btn tint',I('backup','sm')+'<span class="lbl">Export Backup</span>',exportBackup));
