@@ -251,6 +251,11 @@
   .update button{height:36px; padding:0 14px; border:0; border-radius:18px; background:var(--tint); color:#fff; font-size:15px; font-weight:600;}
   .update button.later{background:var(--fill); color:var(--label);}
   #rest .rl{max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .chip .ic{width:16px; height:16px; stroke-width:2.4;}
+  .wk-day{width:40px; flex:0 0 auto; font-size:15px; font-weight:600; color:var(--label2);}
+  .wk-day.today{color:var(--tint);}
+  .row-main .pd{display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:8px; vertical-align:1px;}
+  .rsub .ok{color:var(--green); font-weight:600;} .rsub .up{color:var(--tint); font-weight:600;}
   .chip .nx{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--green); margin-left:1px;}
   .chip.on .nx{color:#fff; opacity:.85;}
   .savebar{position:fixed; top:0; left:0; right:0; z-index:90; display:flex; gap:10px; align-items:center; background:var(--red); color:#fff; padding:calc(10px + env(safe-area-inset-top)) 16px 10px; font-size:15px; font-weight:600;}
@@ -345,7 +350,7 @@
 /* ---------- constants ---------- */
 const STORE='gymtracker_v2', OLD_STORE='gymtracker_v1', PREV_STORE='gymtracker_v2_prev', BAD_STORE='gymtracker_v2_unreadable';
 const SCHEMA=2;
-const APP_VERSION='2.4.0';   // keep in step with VERSION in sw.js
+const APP_VERSION='2.5.0';   // keep in step with VERSION in sw.js
 const PALETTE=['#4f8cff','#2bd47a','#ff5c6c','#ffb84f','#b07cff','#4fd6e0','#ff7cc4','#9ad44f'];
 const KG_PER_LB=0.45359237;
 const KINDS={ weight:{label:'Weighted',w:'Weight',r:'Reps'}, body:{label:'Bodyweight',w:'Added',r:'Reps'}, time:{label:'Timed',w:'Added',r:'Seconds'} };
@@ -441,7 +446,13 @@ const DEFAULT_PROGRAM=[
     ['Calf Raise','weight',90,'3 sets · 10–15 · pause in the stretch'],
     ['Cable Crunch','weight',60,'2 sets · 10–15']]]];
 const defaultExercises=name=>{ const t=DEFAULT_PROGRAM.find(([n])=>n.toLowerCase()===String(name).toLowerCase()); return t? t[1].map(([n,kind,rest,desc])=>({id:uid(), name:n, desc, kind, rest, archived:false})) : null; };
-function defaultDb(){ return {version:SCHEMA, settings:defaultSettings(), plans:DEFAULT_PROGRAM.map(([n],i)=>({id:uid(),name:n,color:PALETTE[i],archived:false,exercises:defaultExercises(n)})), log:{}}; }
+/* The week, Monday first: a plan name per day, null for rest. */
+const DEFAULT_WEEK=['Push','Pull','Legs',null,'Upper','Lower',null];
+const weekFor=plans=>DEFAULT_WEEK.map(n=>{ const p=n&&plans.find(q=>q.name===n); return p? p.id : null; });
+function defaultDb(){
+  const plans=DEFAULT_PROGRAM.map(([n],i)=>({id:uid(),name:n,color:PALETTE[i],archived:false,exercises:defaultExercises(n)}));
+  return {version:SCHEMA, settings:defaultSettings(), plans, schedule:weekFor(plans), log:{}};
+}
 /* Adds the default program to existing data: same-named plans get any missing exercises appended (yours are left as they are), missing plans are created. */
 function addDefaultProgram(only){
   let addedEx=0, addedPlans=0;
@@ -456,6 +467,7 @@ function addDefaultProgram(only){
     });
     p.exercises=p.exercises.filter(x=>!x.archived).concat(p.exercises.filter(x=>x.archived));
   });
+  if(!only&&!db.schedule.some(Boolean)) db.schedule=weekFor(db.plans);   // only fill an empty week; never rearrange one you've set
   commit();
   return {addedEx, addedPlans};
 }
@@ -487,7 +499,7 @@ function sanitize(d){
   if(!d.version){ if(d.plans&&typeof d.plans==='object'&&!Array.isArray(d.plans)) return sanitize(migrateV1(d)); throw new Error('This is not a Gym Tracker file.'); }
   if(d.version>SCHEMA) throw new Error('This backup was made by a newer version of Gym Tracker.');
   if(!Array.isArray(d.plans)) throw new Error('This is not a Gym Tracker file.');
-  const out={version:SCHEMA, settings:cleanSettings(d.settings), plans:[], log:{}};
+  const out={version:SCHEMA, settings:cleanSettings(d.settings), plans:[], schedule:[], log:{}};
   const exOf=new Map(), seen=new Set();
   d.plans.forEach((p,i)=>{
     if(!p||!isId(p.id)||seen.has(p.id)) return; seen.add(p.id);
@@ -499,6 +511,8 @@ function sanitize(d){
     });
     out.plans.push(plan);
   });
+  const sch=Array.isArray(d.schedule)? d.schedule : [];
+  out.schedule=[0,1,2,3,4,5,6].map(i=>exOf.has(sch[i])? sch[i] : null);
   const log=d.log&&typeof d.log==='object'? d.log : {};
   Object.keys(log).forEach(date=>{
     const day=log[date]; if(!isDateStr(date)||!day||typeof day!=='object') return;
@@ -982,7 +996,7 @@ function observeTitle(){
 function chips(list,withAdd,next){
   const c=document.createElement('div'); c.className='chips'; c.setAttribute('role','tablist');
   list.forEach(p=>{
-    const b=btn('chip'+(p.id===curPlan?' on':'')+(p.archived?' arch':''),'<i style="background:'+p.color+'"></i>'+esc(p.name)+(next&&next.id===p.id? '<span class="nx">Next</span>' : ''),()=>{ if(curPlan!==p.id){ curPlan=p.id; haptic(); render(); } });
+    const b=btn('chip'+(p.id===curPlan?' on':'')+(p.archived?' arch':''),'<i style="background:'+p.color+'"></i>'+esc(p.name)+(next&&next.id===p.id? '<span class="nx">Next</span>' : ''),()=>{ if(curPlan!==p.id||plansPane!=='plan'){ curPlan=p.id; plansPane='plan'; haptic(); render(); } });
     b.setAttribute('role','tab'); b.setAttribute('aria-selected',p.id===curPlan); c.appendChild(b);
   });
   if(withAdd) c.appendChild(btn('chip add',I('plus')+'Plan',newPlan,'New plan'));
@@ -993,7 +1007,7 @@ function newPlan(){
   formPrompt('New Plan','Plan name, e.g. Push','','Add',n=>{
     if(db.plans.some(p=>p.name.toLowerCase()===n.toLowerCase())){ toast('A plan with that name exists'); return false; }
     const p={id:uid(), name:n, color:PALETTE[db.plans.length%PALETTE.length], archived:false, exercises:[]};
-    db.plans.push(p); curPlan=p.id; commit(); view='plans'; render(); scrollTo(0,0); toast('Plan created · now add its exercises');
+    db.plans.push(p); curPlan=p.id; commit(); view='plans'; plansPane='plan'; render(); scrollTo(0,0); toast('Plan created · now add its exercises');
   });
 }
 /* A plan with history is archived (restorable in Settings); an unused one is deleted. Either way Undo is offered. */
@@ -1002,14 +1016,37 @@ function archivePlan(p){
   undoable(p.name+(used? ' archived' : ' deleted'),()=>{
     if(used) p.archived=true;
     else { db.plans=db.plans.filter(q=>q!==p); Object.keys(db.log).forEach(d=>{ delete db.log[d][p.id]; if(!Object.keys(db.log[d]).length) delete db.log[d]; }); }
+    db.schedule=db.schedule.map(id=>id===p.id? null : id);
     curPlan=null; commit(); render();
   });
 }
 
 /* ---------- up next ----------
-   Learns your rotation from the last 8 weeks: whatever followed the last plan you trained the previous time you trained it.
-   If there's no pattern yet, it falls back to the plan you trained longest ago. */
+   With a weekly order set (Plans → Week): the first workout in that order not yet done since Monday.
+   A missed workout waits rather than being skipped. Sessions on any day count, so you can train on other days. */
+const dayIdx=ds=>(parseYmd(ds).getDay()+6)%7;   // 0 = Monday
+const DAYS=['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
+function weekStatus(){
+  const t=todayStr(), mon=mondayOf(t), left=new Map();
+  allDates().forEach(d=>{ if(d>=mon&&d<=t) dayPlans(d).forEach(pid=>left.set(pid,(left.get(pid)||0)+1)); });
+  const doneBefore=new Map(); allDates().forEach(d=>{ if(d>=mon&&d<t) dayPlans(d).forEach(pid=>doneBefore.set(pid,(doneBefore.get(pid)||0)+1)); });
+  const slots=db.schedule.map((id,i)=>{ const p=id&&planById(id); return {i, p:p&&!p.archived? p : null}; });
+  // done = matched to a session this week (today included); next = first slot not covered by sessions before today
+  slots.forEach(s=>{ if(!s.p) return; const n=left.get(s.p.id)||0; s.done=n>0; if(n>0) left.set(s.p.id,n-1); });
+  let next=null;
+  for(const s of slots){ if(!s.p) continue; const n=doneBefore.get(s.p.id)||0; if(n>0){ doneBefore.set(s.p.id,n-1); continue; } next=s; break; }
+  const planned=slots.filter(s=>s.p);
+  return {slots, next, planned:planned.length, complete:!!planned.length&&!next};
+}
 function upNextPlan(){
+  if(db.schedule.some(id=>{ const p=id&&planById(id); return p&&!p.archived; })){
+    const w=weekStatus(); return w.next? w.next.p : null;
+  }
+  return learnedNext();
+}
+/* No weekly order: learn the rotation from the last 8 weeks (whatever followed the last plan the previous time),
+   falling back to the plan trained longest ago. */
+function learnedNext(){
   const t=todayStr(), from=shiftDay(t,-56), seq=[];
   const usable=p=>p&&!p.archived&&p.exercises.some(x=>!x.archived);
   allDates().forEach(d=>{ if(d>=from&&d<t) dayPlans(d).forEach(pid=>{ if(usable(planById(pid))) seq.push(pid); }); });
@@ -1037,8 +1074,15 @@ function updateDaySub(){
   const s=$('daySub'); if(!s) return;
   const dots=dayPlans(curDate).map(planById).map(p=>'<i style="background:'+p.color+'"></i>').join('');
   const nx=showUpNext();
+  let note='';
+  if(curDate===todayStr()&&!dots&&db.schedule.some(Boolean)){
+    const w=weekStatus(), ti=dayIdx(curDate);
+    if(w.complete) note='<span>· Week complete 🎉</span>';
+    else if(w.next&&w.next.i<ti) note='<span>· planned for '+DAYS[w.next.i].slice(0,3)+'</span>';
+    else if(!db.schedule[ti]) note='<span>· Rest day</span>';
+  }
   s.innerHTML='<span>'+esc(longDate(curDate))+'</span>'+(dots?'<span class="dots" aria-label="Trained">'+dots+'</span>':'')+(curDate!==todayStr()?'<button class="link" id="goToday">Go to Today</button>':'')+
-    (nx? (nx.id===curPlan? '<span>· Up next</span>' : '<button class="link" id="goNext">Up next: '+esc(nx.name)+'</button>') : '');
+    (nx? (nx.id===curPlan? '<span>· Up next</span>' : '<button class="link" id="goNext">Up next: '+esc(nx.name)+'</button>') : '')+note;
   const g=$('goToday'); if(g) g.onclick=()=>{ haptic(); goDate(todayStr()); };
   const n=$('goNext'); if(n) n.onclick=()=>{ haptic(); curPlan=nx.id; render(); };
 }
@@ -1327,13 +1371,52 @@ function openExSheet(plan,ex){
 }
 
 /* ---------- PLANS ---------- */
+let plansPane='plan';   // 'week' shows the weekly order instead of one plan
 function renderPlansView(){
   setNav('Plans',[],[navBtn('plus','New plan',newPlan)]);
   const h=$('head'); h.innerHTML='<div class="large"><h1>Plans</h1></div>';
-  h.appendChild(chips(db.plans.filter(p=>!p.archived),true));
+  const c=chips(db.plans.filter(p=>!p.archived),true);
+  const wk=btn('chip'+(plansPane==='week'? ' on' : ''),I('cal','sm')+'Week',()=>{ if(plansPane!=='week'){ plansPane='week'; haptic(); render(); } });
+  wk.classList.add('wk'); c.prepend(wk);
+  if(plansPane==='week') c.querySelectorAll('.chip.on:not(.wk)').forEach(x=>{ x.classList.remove('on'); x.setAttribute('aria-selected','false'); });
+  h.appendChild(c);
   renderPlans();
 }
+/* Weekly order: Monday to Sunday, a workout or rest per day. Drag to reorder, tap a day to change it. */
+function renderWeek(){
+  const c=$('content'); c.innerHTML='';
+  const w=weekStatus(), ti=dayIdx(todayStr());
+  c.insertAdjacentHTML('beforeend','<div class="group-h" style="padding-top:6px">Weekly order'+(w.planned? ' · '+w.slots.filter(s=>s.done).length+' of '+w.planned+' done' : '')+'</div>');
+  const g=document.createElement('div'); g.className='group list';
+  w.slots.forEach(s=>{
+    const raw=db.schedule[s.i], arch=raw&&!s.p&&planById(raw);
+    const wrap=document.createElement('div'); wrap.className='swipe';
+    const status=s.done? '<span class="ok">✓ Done this week</span>' : w.next===s? '<span class="up">Up next</span>' : s.i===ti? 'Today' : '';
+    wrap.innerHTML='<div class="row slide"><span class="grip" role="button" aria-label="Drag to reorder '+DAYS[s.i]+'">'+I('grip')+'</span>'+
+      '<span class="wk-day'+(s.i===ti? ' today' : '')+'">'+DAYS[s.i].slice(0,3)+'</span>'+
+      '<button class="row-main"><span class="lbl">'+(s.p? '<i class="pd" style="background:'+s.p.color+'"></i>'+esc(s.p.name) : '<span class="muted">'+(arch? esc(arch.name)+' (archived)' : 'Rest')+'</span>')+'</span>'+
+      (status? '<span class="rsub">'+status+'</span>' : '')+'</button>'+I('chevR','chev')+'</div>';
+    wrap.querySelector('.row-main').onclick=()=>actionSheet(DAYS[s.i],
+      db.plans.filter(p=>!p.archived).map(p=>({label:p.name+(p.id===raw? ' ✓' : ''), fn:()=>{ db.schedule[s.i]=p.id; commit(); haptic(); renderWeek(); }}))
+        .concat([{label:'Rest Day'+(!raw? ' ✓' : ''), fn:()=>{ db.schedule[s.i]=null; commit(); haptic(); renderWeek(); }}]));
+    g.appendChild(wrap);
+  });
+  attachReorder(g,(from,to)=>{ const a=db.schedule.slice(), [m]=a.splice(from,1); a.splice(to,0,m); db.schedule=a; commit(); renderWeek(); });
+  c.appendChild(g);
+  c.insertAdjacentHTML('beforeend','<div class="group-f">Drag the lines to change the order, tap a day to swap its workout. Up next follows this order from Monday. A missed workout waits for you instead of being skipped, and training on a different day still counts.</div>');
+  const pr=document.createElement('div'); pr.className='group'; pr.style.marginTop='20px';
+  const preset=weekFor(db.plans.filter(p=>!p.archived));
+  if(preset.some(Boolean)) pr.appendChild(btn('row btn tint','<span class="lbl">Use Push · Pull · Legs · Rest · Upper · Lower · Rest</span>',()=>{
+    undoable('Weekly order reset',()=>{ db.schedule=preset; commit(); renderWeek(); });
+  }));
+  pr.appendChild(btn('row btn destructive','<span class="lbl">Clear Weekly Order</span>',()=>{
+    undoable('Weekly order cleared',()=>{ db.schedule=[null,null,null,null,null,null,null]; commit(); renderWeek(); });
+  }));
+  c.appendChild(pr);
+  c.insertAdjacentHTML('beforeend','<div class="group-f">With no weekly order, Up next learns your rotation from recent sessions instead.</div>');
+}
 function renderPlans(){
+  if(plansPane==='week') return renderWeek();
   const c=$('content'); c.innerHTML='';
   const plan=planById(curPlan);
   if(!plan){ c.appendChild(emptyState('plans','No Plans Yet','Create a plan such as Push, Pull or Legs, then list its exercises.',{label:'Create Plan',fn:newPlan})); return; }
@@ -1480,7 +1563,7 @@ function renderSettings(){
   rr.appendChild(stp); rt.appendChild(rr);
   switchRow(rt,'Start When a Set Is Ticked',st.restAuto,v=>{ st.restAuto=v; });
   c.insertAdjacentHTML('beforeend','<div class="group-f">This is the default. Give an exercise its own rest time by editing it in Plans.</div>');
-  const wo=sec('Workout','Learns your rotation from the last 8 weeks, e.g. Push → Pull → Legs, and opens today on the plan that comes next.');
+  const wo=sec('Workout','Opens today on the next workout in your weekly order (Plans → Week). With no order set, it learns your rotation from recent sessions.');
   switchRow(wo,'Open on the Plan That’s Up Next',st.upNext,v=>{ st.upNext=v; });
   const pg=sec('Program','Fills Push, Pull, Legs, Upper and Lower with the default machine-based program, with targets and rest times. Exercises you already have, and all your history, are left as they are.');
   pg.appendChild(btn('row btn tint',I('plans','sm')+'<span class="lbl">Add Default Program</span>',()=>{
