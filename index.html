@@ -236,6 +236,23 @@
     background:var(--sheet); -webkit-backdrop-filter:blur(20px); backdrop-filter:blur(20px); color:var(--label); padding:11px 20px; border-radius:22px; font-size:15px; font-weight:600; text-align:center;
     box-shadow:var(--shadow); transition:transform .4s cubic-bezier(.2,.9,.3,1.15); pointer-events:none;}
   .toast.show{transform:translate(-50%,0);}
+  .snack{position:fixed; z-index:46; left:50%; bottom:calc(var(--tabB) + 74px); transform:translate(-50%,16px); opacity:0; pointer-events:none; transition:transform .3s cubic-bezier(.2,.9,.3,1.1), opacity .2s, bottom .3s;
+    width:min(calc(100% - 32px), 480px); min-height:50px; display:flex; align-items:center; gap:10px; padding:5px 5px 5px 18px; border-radius:25px; background:var(--label); color:var(--bg); box-shadow:var(--shadow); font-size:15px; font-weight:500;}
+  .snack.show{transform:translate(-50%,0); opacity:1; pointer-events:auto;}
+  body.resting .snack{bottom:calc(var(--tabB) + 140px);}
+  .snack span{flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .snack button{flex:0 0 auto; height:40px; padding:0 18px; border:0; border-radius:20px; background:var(--tint); color:#fff; font-size:15px; font-weight:600;}
+  .snack button:active{opacity:.7;}
+  .update{position:fixed; z-index:85; top:calc(env(safe-area-inset-top) + 8px); left:50%; transform:translate(-50%,calc(-100% - 20px - env(safe-area-inset-top))); transition:transform .4s cubic-bezier(.2,.9,.3,1.15);
+    width:min(calc(100% - 32px), 480px); display:flex; align-items:center; gap:8px; padding:6px 6px 6px 18px; border-radius:26px; font-size:15px; font-weight:600;
+    background:var(--sheet); -webkit-backdrop-filter:blur(20px); backdrop-filter:blur(20px); box-shadow:var(--shadow);}
+  .update.show{transform:translate(-50%,0);}
+  .update span{flex:1; min-width:0;}
+  .update button{height:36px; padding:0 14px; border:0; border-radius:18px; background:var(--tint); color:#fff; font-size:15px; font-weight:600;}
+  .update button.later{background:var(--fill); color:var(--label);}
+  #rest .rl{max-width:40%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .chip .nx{font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.3px; color:var(--green); margin-left:1px;}
+  .chip.on .nx{color:#fff; opacity:.85;}
   .savebar{position:fixed; top:0; left:0; right:0; z-index:90; display:flex; gap:10px; align-items:center; background:var(--red); color:#fff; padding:calc(10px + env(safe-area-inset-top)) 16px 10px; font-size:15px; font-weight:600;}
   .savebar span{flex:1;} .savebar button{height:32px; padding:0 14px; border-radius:16px; border:0; background:#fff; color:#b00012; font-weight:700;}
   .haptic{position:fixed; left:-100px; top:0; width:1px; height:1px; overflow:hidden; opacity:0; pointer-events:none;}
@@ -315,6 +332,8 @@
   <button data-view="settings"><svg class="ic" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h9M17 7h3M4 12h3M11 12h9M4 17h11M19 17h1"/><circle cx="15" cy="7" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="17" r="2"/></svg><span>Settings</span></button>
 </nav>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="snack" id="snack" role="status" aria-live="polite"><span id="snackTxt"></span><button id="snackBtn">Undo</button></div>
+<div class="update" id="update" role="alert"><span>A new version is ready.</span><button class="later" id="updateLater">Later</button><button id="updateBtn">Reload</button></div>
 <div class="tip" id="tip" hidden></div>
 <input type="file" id="importFile" accept=".json,application/json" hidden>
 <label class="haptic" aria-hidden="true"><input type="checkbox" switch tabindex="-1"></label>
@@ -326,10 +345,13 @@
 /* ---------- constants ---------- */
 const STORE='gymtracker_v2', OLD_STORE='gymtracker_v1', PREV_STORE='gymtracker_v2_prev', BAD_STORE='gymtracker_v2_unreadable';
 const SCHEMA=2;
+const APP_VERSION='2.3.0';   // keep in step with VERSION in sw.js
 const PALETTE=['#4f8cff','#2bd47a','#ff5c6c','#ffb84f','#b07cff','#4fd6e0','#ff7cc4','#9ad44f'];
 const KG_PER_LB=0.45359237;
 const KINDS={ weight:{label:'Weighted',w:'Weight',r:'Reps'}, body:{label:'Bodyweight',w:'Added',r:'Reps'}, time:{label:'Timed',w:'Added',r:'Seconds'} };
 const okKind=k=>k==='weight'||k==='body'||k==='time';
+/* An exercise's own rest time in seconds, or null to use the default from Settings. */
+function cleanRest(v){ v=num(v); return v!=null&&v>=15&&v<=900? Math.round(v) : null; }
 const BACKUP_EVERY=5;
 const RANGES={'3m':91,'6m':182,'1y':365,all:Infinity};
 
@@ -370,7 +392,7 @@ const fmtW=kg=>fmtNum(toDisp(kg));
    plans: [{id, name, color, archived, exercises:[{id, name, desc, kind, archived}]}]
    log:   { 'YYYY-MM-DD': { planId: { ex:{ exId:[{w(kg)|null, r|null, warm, done}] }, order?:[exId], note? } } }
    Weights are always stored in kg; lb is a display setting. */
-function defaultSettings(){ return {unit:'kg', backoff:true, backoffPct:80, roundKg:2.5, roundLb:5, restSec:120, restAuto:true, theme:'system', backupAt:null, backupCount:0}; }
+function defaultSettings(){ return {unit:'kg', backoff:true, backoffPct:80, roundKg:2.5, roundLb:5, restSec:120, restAuto:true, upNext:true, theme:'system', backupAt:null, backupCount:0}; }
 function defaultDb(){ return {version:SCHEMA, settings:defaultSettings(), plans:['Push','Pull','Legs','Upper','Lower'].map((n,i)=>({id:uid(),name:n,color:PALETTE[i],archived:false,exercises:[]})), log:{}}; }
 const blankSet=()=>({w:null,r:null,warm:false,done:false});
 const cleanSet=s=>{ s=s||{}; return {w:num(s.w), r:num(s.r), warm:!!s.warm, done:!!s.done}; };
@@ -388,6 +410,7 @@ function cleanSettings(s){
   d.restSec=Math.round(n(s.restSec,10,900,120));
   if(typeof s.restAuto==='boolean') d.restAuto=s.restAuto;
   if(s.theme==='light'||s.theme==='dark') d.theme=s.theme;
+  if(typeof s.upNext==='boolean') d.upNext=s.upNext;
   if(isDateStr(s.backupAt)) d.backupAt=s.backupAt;
   d.backupCount=Math.round(n(s.backupCount,0,1e6,0));
   return d;
@@ -407,7 +430,7 @@ function sanitize(d){
     const ids=new Set(); exOf.set(p.id,ids);
     (Array.isArray(p.exercises)? p.exercises : []).forEach(e=>{
       if(!e||!isId(e.id)||seen.has(e.id)) return; seen.add(e.id); ids.add(e.id);
-      plan.exercises.push({id:e.id, name:clampStr(e.name,80).trim()||'Exercise', desc:clampStr(e.desc,1000), kind:okKind(e.kind)? e.kind : 'weight', archived:!!e.archived});
+      plan.exercises.push({id:e.id, name:clampStr(e.name,80).trim()||'Exercise', desc:clampStr(e.desc,1000), kind:okKind(e.kind)? e.kind : 'weight', rest:cleanRest(e.rest), archived:!!e.archived});
     });
     out.plans.push(plan);
   });
@@ -601,17 +624,13 @@ function nextSet(ex,sets){
   return {set:blankSet(), msg:'Set added'};
 }
 
-/* Exercises with history are archived (kept for Progress and past dates); empty ones are deleted. */
+/* Exercises with history are archived (kept for Progress and past dates); empty ones are deleted. Callers wrap this in undoable(). */
 function removeExercise(plan,ex){
   if(!exHasHistory(plan.id,ex.id)){
-    if(!confirm('Remove "'+ex.name+'" from '+plan.name+'?')) return false;
     plan.exercises=plan.exercises.filter(x=>x!==ex);
     Object.keys(db.log).forEach(d=>{ const e=db.log[d][plan.id]; if(e){ delete e.ex[ex.id]; if(e.order) e.order=e.order.filter(id=>id!==ex.id); } });
-  } else {
-    if(!confirm('Remove "'+ex.name+'" from '+plan.name+'?\n\nIts history is kept in Progress and on past dates. You can restore it from the Plans tab.')) return false;
-    ex.archived=true;
-  }
-  commit(); toast('Removed from '+plan.name); return true;
+  } else ex.archived=true;
+  commit();
 }
 
 /* One exercise per line; leading bullets or numbers ("- ", "1. ") are ignored so a pasted list works. */
@@ -631,8 +650,9 @@ function quickAdd(plan,text){
 /* ---------- rest timer ---------- */
 const rest={end:0, timer:null, hideT:null, ctx:null};
 const mmss=s=>Math.floor(s/60)+':'+pad(s%60);
-function startRest(sec){
+function startRest(sec,label){
   sec=sec||db.settings.restSec; rest.end=Date.now()+sec*1000; rest.total=sec*1000; ensureAudio();
+  document.querySelector('#rest .rl').textContent=label||'Rest';
   clearTimeout(rest.hideT); clearInterval(rest.timer);
   $('rest').classList.add('show'); $('rest').classList.remove('over'); document.body.classList.add('resting');
   rest.timer=setInterval(tickRest,250); tickRest();
@@ -894,10 +914,10 @@ function observeTitle(){
   titleObs=new IntersectionObserver(([e])=>nav.classList.toggle('scrolled',!e.isIntersecting),{rootMargin:'-'+nav.offsetHeight+'px 0px 0px 0px'});
   titleObs.observe(h);
 }
-function chips(list,withAdd){
+function chips(list,withAdd,next){
   const c=document.createElement('div'); c.className='chips'; c.setAttribute('role','tablist');
   list.forEach(p=>{
-    const b=btn('chip'+(p.id===curPlan?' on':'')+(p.archived?' arch':''),'<i style="background:'+p.color+'"></i>'+esc(p.name),()=>{ if(curPlan!==p.id){ curPlan=p.id; haptic(); render(); } });
+    const b=btn('chip'+(p.id===curPlan?' on':'')+(p.archived?' arch':''),'<i style="background:'+p.color+'"></i>'+esc(p.name)+(next&&next.id===p.id? '<span class="nx">Next</span>' : ''),()=>{ if(curPlan!==p.id){ curPlan=p.id; haptic(); render(); } });
     b.setAttribute('role','tab'); b.setAttribute('aria-selected',p.id===curPlan); c.appendChild(b);
   });
   if(withAdd) c.appendChild(btn('chip add',I('plus')+'Plan',newPlan,'New plan'));
@@ -911,15 +931,36 @@ function newPlan(){
     db.plans.push(p); curPlan=p.id; commit(); view='plans'; render(); scrollTo(0,0); toast('Plan created · now add its exercises');
   });
 }
+/* A plan with history is archived (restorable in Settings); an unused one is deleted. Either way Undo is offered. */
 function archivePlan(p){
-  if(!planHasHistory(p.id)){
-    if(!confirm('Delete the plan "'+p.name+'"?')) return;
-    db.plans=db.plans.filter(q=>q!==p); Object.keys(db.log).forEach(d=>{ delete db.log[d][p.id]; if(!Object.keys(db.log[d]).length) delete db.log[d]; });
-    curPlan=null; commit(); render(); toast('Plan deleted'); return;
-  }
-  if(!confirm('Archive "'+p.name+'"?\n\nIt’s hidden from your plans, but its history stays in Progress and the calendar. You can restore it in Settings.')) return;
-  p.archived=true; curPlan=null; commit(); render(); toast('Plan archived');
+  const used=planHasHistory(p.id);
+  undoable(p.name+(used? ' archived' : ' deleted'),()=>{
+    if(used) p.archived=true;
+    else { db.plans=db.plans.filter(q=>q!==p); Object.keys(db.log).forEach(d=>{ delete db.log[d][p.id]; if(!Object.keys(db.log[d]).length) delete db.log[d]; }); }
+    curPlan=null; commit(); render();
+  });
 }
+
+/* ---------- up next ----------
+   Learns your rotation from the last 8 weeks: whatever followed the last plan you trained the previous time you trained it.
+   If there's no pattern yet, it falls back to the plan you trained longest ago. */
+function upNextPlan(){
+  const t=todayStr(), from=shiftDay(t,-56), seq=[];
+  const usable=p=>p&&!p.archived&&p.exercises.some(x=>!x.archived);
+  allDates().forEach(d=>{ if(d>=from&&d<t) dayPlans(d).forEach(pid=>{ if(usable(planById(pid))) seq.push(pid); }); });
+  if(!seq.length) return null;
+  const last=seq[seq.length-1];
+  for(let i=seq.length-2;i>=0;i--) if(seq[i]===last){ if(seq[i+1]!==last) return planById(seq[i+1]); break; }
+  const lastSeen=new Map(); seq.forEach((pid,i)=>lastSeen.set(pid,i));
+  const others=[...lastSeen.entries()].filter(([pid])=>pid!==last).sort((a,b)=>a[1]-b[1]);
+  return others.length? planById(others[0][0]) : null;
+}
+/* On an empty "today", open on the plan that's up next. */
+function applyUpNext(){
+  if(!db.settings.upNext||curDate!==todayStr()||dayPlans(curDate).length) return;
+  const p=upNextPlan(); if(p) curPlan=p.id;
+}
+const showUpNext=()=>curDate===todayStr()&&!dayPlans(curDate).length? upNextPlan() : null;
 
 /* ---------- dates in the header ---------- */
 function relDay(ds){
@@ -930,10 +971,13 @@ const longDate=ds=>parseYmd(ds).toLocaleDateString('en-GB',{weekday:'long',day:'
 function updateDaySub(){
   const s=$('daySub'); if(!s) return;
   const dots=dayPlans(curDate).map(planById).map(p=>'<i style="background:'+p.color+'"></i>').join('');
-  s.innerHTML='<span>'+esc(longDate(curDate))+'</span>'+(dots?'<span class="dots" aria-label="Trained">'+dots+'</span>':'')+(curDate!==todayStr()?'<button class="link" id="goToday">Go to Today</button>':'');
+  const nx=showUpNext();
+  s.innerHTML='<span>'+esc(longDate(curDate))+'</span>'+(dots?'<span class="dots" aria-label="Trained">'+dots+'</span>':'')+(curDate!==todayStr()?'<button class="link" id="goToday">Go to Today</button>':'')+
+    (nx? (nx.id===curPlan? '<span>· Up next</span>' : '<button class="link" id="goNext">Up next: '+esc(nx.name)+'</button>') : '');
   const g=$('goToday'); if(g) g.onclick=()=>{ haptic(); goDate(todayStr()); };
+  const n=$('goNext'); if(n) n.onclick=()=>{ haptic(); curPlan=nx.id; render(); };
 }
-function goDate(ds){ curDate=ds; const dp=dayPlans(ds); if(dp.length&&!dp.includes(curPlan)) curPlan=dp[0]; fixCurPlan(); render(); }
+function goDate(ds){ curDate=ds; const dp=dayPlans(ds); if(dp.length&&!dp.includes(curPlan)) curPlan=dp[0]; fixCurPlan(); applyUpNext(); render(); }
 
 /* ---------- WORKOUT ---------- */
 function renderLogView(){
@@ -949,7 +993,7 @@ function renderLogView(){
   pv.onclick=()=>{ haptic(); goDate(shiftDay(curDate,-1)); }; nx.onclick=()=>{ haptic(); goDate(shiftDay(curDate,1)); };
   h.appendChild(lg);
   const sub=document.createElement('div'); sub.className='sub'; sub.id='daySub'; h.appendChild(sub); updateDaySub();
-  h.appendChild(chips(tabPlans(),true));
+  h.appendChild(chips(tabPlans(),true,showUpNext()));
   renderLog();
 }
 function backupDue(){
@@ -1016,9 +1060,9 @@ function buildCard(plan,ex,i,n){
   card.innerHTML='<div class="card-h"><div class="t"><h3>'+esc(ex.name)+'</h3>'+(tags? '<div class="tags">'+tags+'</div>' : '')+(ex.desc? '<p class="desc">'+esc(ex.desc)+'</p>' : '')+'</div></div>'+
     '<div class="sets-h" aria-hidden="true"><span>Set</span><span>Previous</span><span>'+(ex.kind==='weight'? U() : '+'+U())+'</span><span>'+(ex.kind==='time'? 'Sec' : 'Reps')+'</span><span>'+I('check','xs')+'</span></div>';
   const repeat=()=>{
-    if(!sets.every(isBlank)&&!confirm('Replace these sets with last session’s?')) return;
-    store(); sets.length=0; last.sets.forEach(s=>sets.push({w:s.w,r:s.r,warm:s.warm,done:false}));
-    changed(); haptic(); updateDaySub(); refresh(); toast('Copied from '+shortDate(last.date));
+    const fill=()=>{ store(); sets.length=0; last.sets.forEach(s=>sets.push({w:s.w,r:s.r,warm:s.warm,done:false})); changed(); haptic(); updateDaySub(); refresh(); };
+    if(sets.every(isBlank)){ fill(); toast('Copied from '+shortDate(last.date)); }
+    else undoable('Replaced with '+shortDate(last.date)+'’s sets',fill);
   };
   const menu=()=>actionSheet(ex.name,[
     {label:'Edit Exercise', fn:()=>openExSheet(plan,ex)},
@@ -1026,7 +1070,7 @@ function buildCard(plan,ex,i,n){
     {label:'Move Down', disabled:i===n-1, fn:()=>moveExercise(plan,i,1)},
     ...(last? [{label:'Repeat Last Session', fn:repeat}] : []),
     ex.archived? {label:'Restore to Plan', fn:()=>{ ex.archived=false; commit(); render(); toast('Restored to '+plan.name); }}
-               : {label:'Remove from Plan', destructive:true, fn:()=>{ if(removeExercise(plan,ex)) render(); }}]);
+               : {label:'Remove from Plan', destructive:true, fn:()=>undoable(ex.name+' removed',()=>{ removeExercise(plan,ex); render(); })}]);
   card.querySelector('.card-h').appendChild(btn('icon-btn more',I('more'),menu,'Options for '+ex.name));
   let workNo=0;
   sets.forEach((s,si)=>{
@@ -1054,9 +1098,9 @@ function buildCard(plan,ex,i,n){
       }
       row.classList.toggle('done',s.done); row.querySelector('.chk').setAttribute('aria-pressed',s.done);
       haptic(); after();
-      if(s.done&&db.settings.restAuto) startRest();
+      if(s.done&&db.settings.restAuto) startRest(ex.rest,ex.name);
     };
-    const del=()=>{ store(); sets.splice(si,1); if(!sets.length) sets.push(blankSet()); changed(); haptic(); updateDaySub(); refresh(); };
+    const del=()=>undoable('Set '+(si+1)+' deleted',()=>{ store(); sets.splice(si,1); if(!sets.length) sets.push(blankSet()); changed(); haptic(); updateDaySub(); refresh(); });
     row.querySelector('.no').onclick=()=>actionSheet('Set '+(si+1),[
       {label:s.warm? 'Mark as Working Set' : 'Mark as Warm-up', fn:()=>{ store(); s.warm=!s.warm; changed(); updateDaySub(); refresh(); }},
       {label:'Delete Set', destructive:true, fn:del}]);
@@ -1178,29 +1222,40 @@ function formPrompt(title,ph,value,ok,cb){
 }
 const KIND_HELP={weight:'Log weight × reps.', body:'Log reps. Add weight only if you wear a belt or vest.', time:'Log seconds held, with optional added weight.'};
 function openExSheet(plan,ex){
-  let kind=ex? ex.kind : 'weight';
+  let kind=ex? ex.kind : 'weight', restSec=ex&&ex.rest||null;
   const body=document.createElement('div');
   body.innerHTML='<div class="group" style="margin-top:12px"><input class="cell-input" id="exName" type="text" maxlength="80" autocomplete="off" placeholder="Exercise name"></div>'+
     '<div class="group-h">Type</div><div class="seg-wrap"><div class="seg" id="exKind">'+Object.keys(KINDS).map(k=>'<button data-k="'+k+'">'+KINDS[k].label+'</button>').join('')+'</div></div><div class="group-f" id="exHelp"></div>'+
+    '<div class="group-h">Rest timer</div><div class="group"><div class="row"><span class="lbl">Rest Between Sets</span><span class="val" id="exRestVal"></span>'+
+      '<div class="stepper"><button id="exRestM" aria-label="Shorter rest">−</button><button id="exRestP" aria-label="Longer rest">+</button></div></div></div><div class="group-f" id="exRestF"></div>'+
     '<div class="group-h">Description</div><div class="group"><textarea class="cell-input" id="exDesc" rows="3" maxlength="1000" placeholder="e.g. Flat barbell, pause on chest"></textarea></div>'+
     (ex? '<div class="group" style="margin-top:28px"><button class="row btn center '+(ex.archived? 'tint' : 'destructive')+'" id="exRemove"><span class="lbl">'+(ex.archived? 'Restore to Plan' : 'Remove from Plan')+'</span></button></div>' : '');
   const sync=()=>{ body.querySelectorAll('#exKind button').forEach(b=>b.classList.toggle('on',b.dataset.k===kind)); body.querySelector('#exHelp').textContent=KIND_HELP[kind]; };
+  const syncRest=()=>{
+    const def=mmss(db.settings.restSec);
+    body.querySelector('#exRestVal').textContent=restSec? mmss(restSec) : 'Default';
+    const f=body.querySelector('#exRestF');
+    f.innerHTML=restSec? 'Set for this exercise only. <button class="link" id="exRestD">Use the default ('+def+')</button>' : 'Uses the default from Settings ('+def+'). Long rests suit heavy compound lifts.';
+    const d=f.querySelector('#exRestD'); if(d) d.onclick=()=>{ restSec=null; haptic(); syncRest(); };
+  };
+  const stepRest=delta=>{ restSec=Math.max(15,Math.min(900,(restSec||db.settings.restSec)+delta)); haptic(); syncRest(); };
   formSheet({title:ex? 'Edit Exercise' : 'New Exercise', ok:ex? 'Save' : 'Add', body,
     onOk:b=>{
       const name=b.querySelector('#exName').value.trim(), desc=b.querySelector('#exDesc').value.trim();
       if(!name){ b.querySelector('#exName').focus(); return false; }
       if(plan.exercises.some(x=>x!==ex&&x.name.toLowerCase()===name.toLowerCase())){ toast('That name is already used in this plan'); return false; }
-      if(ex){ ex.name=name; ex.kind=kind; ex.desc=desc; } else plan.exercises.splice(plan.exercises.filter(x=>!x.archived).length,0,{id:uid(), name, desc, kind, archived:false});
+      if(ex){ ex.name=name; ex.kind=kind; ex.desc=desc; ex.rest=restSec; } else plan.exercises.splice(plan.exercises.filter(x=>!x.archived).length,0,{id:uid(), name, desc, kind, rest:restSec, archived:false});
       commit(); render(); toast(ex? 'Saved' : 'Added to '+plan.name);
     },
     onOpen:b=>{
       const nm=b.querySelector('#exName'); nm.value=ex? ex.name : ''; b.querySelector('#exDesc').value=ex? ex.desc : '';
       b.querySelectorAll('#exKind button').forEach(x=>x.onclick=()=>{ kind=x.dataset.k; haptic(); sync(); }); sync();
+      b.querySelector('#exRestM').onclick=()=>stepRest(-15); b.querySelector('#exRestP').onclick=()=>stepRest(15); syncRest();
       nm.addEventListener('keydown',e=>{ if(e.key==='Enter') $('formSheet').querySelector('.fs-ok').click(); });
       const rm=b.querySelector('#exRemove');
       if(rm) rm.onclick=()=>closeSheet($('formSheet'),()=>{
         if(ex.archived){ ex.archived=false; commit(); render(); toast('Restored to '+plan.name); }
-        else if(removeExercise(plan,ex)) render();
+        else undoable(ex.name+' removed',()=>{ removeExercise(plan,ex); render(); });
       });
       if(!ex) nm.focus();
     }});
@@ -1224,9 +1279,9 @@ function renderPlans(){
   act.forEach(ex=>{
     const wrap=document.createElement('div'); wrap.className='swipe';
     wrap.innerHTML='<button class="swipe-del" tabindex="-1">Remove</button><div class="row slide"><span class="grip" role="button" aria-label="Drag to reorder '+esc(ex.name)+'">'+I('grip')+'</span>'+
-      '<button class="row-main"><span class="lbl">'+esc(ex.name)+'</span><span class="rsub">'+esc(KINDS[ex.kind].label+(ex.desc? ' · '+ex.desc.split('\n')[0] : ''))+'</span></button>'+I('chevR','chev')+'</div>';
+      '<button class="row-main"><span class="lbl">'+esc(ex.name)+'</span><span class="rsub">'+esc(KINDS[ex.kind].label+(ex.rest? ' · Rest '+mmss(ex.rest) : '')+(ex.desc? ' · '+ex.desc.split('\n')[0] : ''))+'</span></button>'+I('chevR','chev')+'</div>';
     wrap.querySelector('.row-main').onclick=()=>openExSheet(plan,ex);
-    attachSwipe(wrap,()=>{ if(removeExercise(plan,ex)) renderPlans(); else closeSwipes(); });
+    attachSwipe(wrap,()=>undoable(ex.name+' removed',()=>{ removeExercise(plan,ex); renderPlans(); }));
     g.appendChild(wrap);
   });
   attachReorder(g,(from,to)=>{
@@ -1354,6 +1409,9 @@ function renderSettings(){
   [['−',-15,'Shorter'],['+',15,'Longer']].forEach(([s,d,l])=>stp.appendChild(btn('',s,()=>{ st.restSec=Math.max(15,Math.min(900,st.restSec+d)); rr.querySelector('.val').textContent=mmss(st.restSec); haptic(); commit(); },l)));
   rr.appendChild(stp); rt.appendChild(rr);
   switchRow(rt,'Start When a Set Is Ticked',st.restAuto,v=>{ st.restAuto=v; });
+  c.insertAdjacentHTML('beforeend','<div class="group-f">This is the default. Give an exercise its own rest time by editing it in Plans.</div>');
+  const wo=sec('Workout','Learns your rotation from the last 8 weeks, e.g. Push → Pull → Legs, and opens today on the plan that comes next.');
+  switchRow(wo,'Open on the Plan That’s Up Next',st.upNext,v=>{ st.upNext=v; });
   const store=persistState==='yes'? ' The browser has agreed not to clear it automatically.' : persistState==='no'? ' The browser may clear it if the phone runs low on space.' : '';
   const bk=sec('Backup','Your log is stored only in this browser on this phone. Last backup: <b>'+(st.backupAt? esc(fullDate(st.backupAt)) : 'never')+'</b>.'+store);
   bk.appendChild(btn('row btn tint',I('backup','sm')+'<span class="lbl">Export Backup</span>',exportBackup));
@@ -1368,11 +1426,13 @@ function renderSettings(){
       r.appendChild(btn('pill soft','Restore',()=>{ if(a.ex) a.ex.archived=false; else a.p.archived=false; commit(); haptic(); renderSettings(); toast('Restored'); }));
       r.appendChild(btn('pill danger','Delete',()=>{
         const what=a.ex? '"'+a.ex.name+'" and all of its logged sets' : 'the plan "'+a.p.name+'" and all of its logged sessions';
-        if(!confirm('Permanently delete '+what+'?\n\nThis can’t be undone unless you have a backup.')) return;
-        keepPrev();
-        if(a.ex){ a.p.exercises=a.p.exercises.filter(e=>e!==a.ex); Object.keys(db.log).forEach(d=>{ const e=db.log[d][a.p.id]; if(e){ delete e.ex[a.ex.id]; if(e.order) e.order=e.order.filter(id=>id!==a.ex.id); } }); }
-        else { db.plans=db.plans.filter(p=>p!==a.p); Object.keys(db.log).forEach(d=>{ delete db.log[d][a.p.id]; if(!Object.keys(db.log[d]).length) delete db.log[d]; }); }
-        fixCurPlan(); commit(); renderSettings(); toast('Deleted');
+        if(!confirm('Permanently delete '+what+'?\n\nYou can undo straight afterwards; after that only a backup brings it back.')) return;
+        undoable((a.ex? a.ex.name : a.p.name)+' deleted',()=>{
+          keepPrev();
+          if(a.ex){ a.p.exercises=a.p.exercises.filter(e=>e!==a.ex); Object.keys(db.log).forEach(d=>{ const e=db.log[d][a.p.id]; if(e){ delete e.ex[a.ex.id]; if(e.order) e.order=e.order.filter(id=>id!==a.ex.id); } }); }
+          else { db.plans=db.plans.filter(p=>p!==a.p); Object.keys(db.log).forEach(d=>{ delete db.log[d][a.p.id]; if(!Object.keys(db.log[d]).length) delete db.log[d]; }); }
+          fixCurPlan(); commit(); renderSettings();
+        });
       }));
       ag.appendChild(r);
     });
@@ -1380,7 +1440,7 @@ function renderSettings(){
   const dz=sec('','Downloads a backup first, then removes all plans and history from this phone.');
   dz.style.marginTop='32px';
   dz.appendChild(btn('row btn destructive center','<span class="lbl">Reset All Data…</span>',resetDefault));
-  c.insertAdjacentHTML('beforeend','<div class="footnote ver">Gym Tracker 2.2</div>');
+  c.insertAdjacentHTML('beforeend','<div class="footnote ver">Gym Tracker '+APP_VERSION+'</div>');
 }
 $('saveErrExport').onclick=exportBackup;
 
@@ -1427,10 +1487,27 @@ window.addEventListener('scroll',hideTip,{passive:true});
 const isTyping=el=>!!el&&el.matches&&el.matches('input[type=text],textarea');
 document.addEventListener('focusin',e=>{ if(isTyping(e.target)) document.body.classList.add('kb'); });
 document.addEventListener('focusout',()=>setTimeout(()=>{ if(!isTyping(document.activeElement)) document.body.classList.remove('kb'); },60));
+
+/* ---------- undo ---------- */
+let snackT=null, snackFn=null;
+function snack(msg,label,fn,ms){
+  $('snackTxt').textContent=msg; $('snackBtn').textContent=label; snackFn=fn;
+  $('snack').classList.add('show'); clearTimeout(snackT); if(ms) snackT=setTimeout(hideSnack,ms);
+}
+function hideSnack(){ clearTimeout(snackT); snackFn=null; $('snack').classList.remove('show'); }
+$('snackBtn').onclick=()=>{ const f=snackFn; hideSnack(); haptic(); if(f) f(); };
+/* Runs a destructive change, then offers Undo for a few seconds by restoring a snapshot taken just before it.
+   Starting to type dismisses the offer, so an undo can never wipe out numbers entered afterwards. */
+function undoable(msg,action){
+  const snap=JSON.stringify(db), cp=curPlan;
+  action();
+  snack(msg,'Undo',()=>{ db=JSON.parse(snap); curPlan=cp; commit(); render(); toast('Undone'); },6000);
+}
+document.addEventListener('focusin',e=>{ if(isTyping(e.target)) hideSnack(); });
 /* Flush pending saves when the app is hidden; if it was left open overnight on "today", move to the new today. */
 document.addEventListener('visibilitychange',()=>{
   if(document.visibilityState==='hidden'){ if(saveT) save(); return; }
-  const t=todayStr(); if(t!==lastToday){ if(curDate===lastToday){ curDate=t; fixCurPlan(); render(); } lastToday=t; }
+  const t=todayStr(); if(t!==lastToday){ if(curDate===lastToday){ curDate=t; fixCurPlan(); applyUpNext(); render(); } lastToday=t; }
   tickRest();
 });
 window.addEventListener('pagehide',()=>{ if(saveT) save(); });
@@ -1440,12 +1517,28 @@ let toastT;
 function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>t.classList.remove('show'),2000); }
 
 /* ---------- boot ---------- */
-applyTheme(); render();
+applyTheme(); applyUpNext(); render();
 if(bootNote==='migrated'){ if(commit()) toast('Data upgraded · the old copy is kept too'); }
 else if(bootNote==='unreadable'){ alert('Your saved data could not be read, so the app started empty. A copy of the unreadable data was kept on this device. Import a backup from Settings to restore it.'); }
 else if(bootNote==='blocked'){ $('saveErrTxt').textContent='This browser is blocking storage (private mode?), so nothing you log will be kept.'; $('saveErr').hidden=false; }
 askPersist().then(()=>{ if(view==='settings') renderSettings(); });
-if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)) navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+/* ---------- update available ----------
+   sw.js reports its VERSION; if it's newer than this page, a banner offers a reload.
+   iOS keeps home-screen apps in memory for days, so check whenever the app comes back to the front. */
+const verParts=v=>String(v).replace(/^\D+/,'').split('.').map(n=>parseInt(n,10)||0);
+const newerThanApp=v=>{ const a=verParts(v), b=verParts(APP_VERSION); for(let i=0;i<3;i++){ if((a[i]||0)!==(b[i]||0)) return (a[i]||0)>(b[i]||0); } return false; };
+$('updateBtn').onclick=()=>{ save(); location.reload(); };
+$('updateLater').onclick=()=>{ $('update').classList.remove('show'); };
+if('serviceWorker' in navigator&&/^https?:$/.test(location.protocol)){
+  const sw=navigator.serviceWorker, ask=()=>{ if(sw.controller) sw.controller.postMessage('version'); };
+  sw.addEventListener('message',e=>{ if(e.data&&e.data.version&&newerThanApp(e.data.version)) $('update').classList.add('show'); });
+  sw.addEventListener('controllerchange',ask);
+  sw.register('sw.js').then(reg=>{
+    ask();
+    document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') reg.update().catch(()=>{}); });
+  }).catch(()=>{});
+}
 
 </script>
 </body>
